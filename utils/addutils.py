@@ -468,7 +468,7 @@ def build_auction_won_announcement(
     """
     return (
         "🔨 <b>Auction Closed!</b>\n\n"
-        f"🃏 Character: {escape_html(card.char_name)} [[{escape_html(card.theme_emoji)}]]\n"
+        f"🃏 Character: {escape_html(card.char_name)} [{escape_html(card.theme_emoji)}]\n"
         f"{card.rarity_emoji} Rarity: {escape_html(card.rarity)}\n\n"
         f"🏆 Winner: {winner_mention}\n"
         f"👤 Seller: {seller_mention}\n"
@@ -484,7 +484,7 @@ def build_auction_no_bids_announcement(card: "ParsedCard", seller_mention: str) 
     """
     return (
         "🔨 <b>Auction Closed — No Bids</b>\n\n"
-        f"🃏 Character: {escape_html(card.char_name)} [[{escape_html(card.theme_emoji)}]]\n"
+        f"🃏 Character: {escape_html(card.char_name)} [{escape_html(card.theme_emoji)}]\n"
         f"{card.rarity_emoji} Rarity: {escape_html(card.rarity)}\n\n"
         f"👤 Seller: {seller_mention}\n\n"
         "No one placed a bid before this auction closed."
@@ -498,7 +498,7 @@ def build_winner_dm_message(card: "ParsedCard", final_bid: int, seller_mention: 
     """
     return (
         "🎉 <b>You won the auction!</b>\n\n"
-        f"🃏 Character: {escape_html(card.char_name)} [[{escape_html(card.theme_emoji)}]]\n"
+        f"🃏 Character: {escape_html(card.char_name)} [{escape_html(card.theme_emoji)}]\n"
         f"{card.rarity_emoji} Rarity: {escape_html(card.rarity)}\n"
         f"{CURRENCY_EMOJI} Final Price: {final_bid}\n"
         f"👤 Seller: {seller_mention}\n\n"
@@ -513,7 +513,7 @@ def build_seller_sold_dm_message(card: "ParsedCard", final_bid: int, winner_ment
     """
     return (
         "💰 <b>Your card has been sold!</b>\n\n"
-        f"🃏 Character: {escape_html(card.char_name)} [[{escape_html(card.theme_emoji)}]]\n"
+        f"🃏 Character: {escape_html(card.char_name)} [{escape_html(card.theme_emoji)}]\n"
         f"{card.rarity_emoji} Rarity: {escape_html(card.rarity)}\n"
         f"{CURRENCY_EMOJI} Final Price: {final_bid}\n"
         f"🏆 Winner: {winner_mention}\n\n"
