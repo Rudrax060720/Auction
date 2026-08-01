@@ -9,7 +9,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from config import BOT_TOKEN
 from db import init_db
 from handlers.start import start
-from handlers.help import help_command
+from handlers.help import help_command, rules_command
 from handlers.admin import set_image, add_admin_command, remove_admin_command
 from handlers.verify import check_join_callback
 from handlers.add import register_add_handlers, close_due_auctions
@@ -88,7 +88,7 @@ def main() -> None:
     app.add_handler(CommandHandler("removeadmin", remove_admin_command))
     app.add_handler(CommandHandler(BOT_COMMANDS, global_ban_check_message), group=-1)
     app.add_handler(CallbackQueryHandler(global_ban_check_callback, pattern=".*"), group=-1)
-   
+    app.add_handler(CommandHandler("rules", rules_command))
     register_ban_handlers(app)
     register_add_handlers(app)
 
