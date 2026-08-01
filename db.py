@@ -98,7 +98,7 @@ async def upsert_user(user_id: int, username: str | None, first_name: str | None
     """
     existing = await users_col.find_one({"user_id": user_id})
 
-    await users_col.update_one( 
+    await users_col.update_one(
         {"user_id": user_id},
         {
             "$set": {
@@ -167,9 +167,6 @@ async def is_banned(user_id: int) -> bool:
 
 
 # ---- Pending submissions (awaiting admin verify/reject) ----
-#
-# Persisted so a card sitting in the log group waiting on an admin doesn't
-# vanish if the bot restarts before someone taps Verified/Rejected.
 
 async def create_pending_submission(
     submission_id: str,
@@ -204,10 +201,11 @@ async def delete_pending_submission(submission_id: str) -> None:
 
 # ---- Auctions ----
 #
-# Persisting these to MongoDB (instead of keeping them in an in-memory dict)
-# is what makes the 2-day auction timer survive restarts/redeploys — a
-# repeating job just asks "what's due right now?" instead of relying on a
-# single in-memory timer living for the full 2 days uninterrupted.
+# bid_history keeps every accepted bid in order (each entry:
+# {bidder_id, bidder_name, amount}). This is what makes /cancelbid possible
+# — cancelling pops the current highest bid off the end of the list and
+# reverts highest_bid/highest_bidder back to whatever the previous entry
+# was (or to "no bids" if the cancelled bid was the only one).
 
 async def create_auction(
     submission_id: str,
@@ -231,6 +229,7 @@ async def create_auction(
             "highest_bid": None,
             "highest_bidder_id": None,
             "highest_bidder_name": None,
+            "bid_history": [],
             "channel_message_id": channel_message_id,
             "group_message_id": group_message_id,
             "end_time": end_time,
@@ -242,11 +241,18 @@ async def get_auction(submission_id: str) -> dict | None:
     return await auctions_col.find_one({"submission_id": submission_id, "status": "active"})
 
 
+async def get_active_auctions() -> list[dict]:
+    cursor = auctions_col.find({"status": "active"})
+    return [doc async for doc in cursor]
+
+
 async def place_bid(submission_id: str, amount: int, bidder_id: int, bidder_name: str) -> dict:
     """
     Atomically raises the highest bid, but only if `amount` still beats the
     current highest (or base price) at the moment of the write — this closes
-    the race window where two people bid at nearly the same instant.
+    the race window where two people bid at nearly the same instant. Also
+    appends the accepted bid to bid_history so it can be reverted to later
+    via cancel_current_bid.
 
     Returns one of:
       {"status": "ok", "previous_bidder_id": <id or None>}
@@ -264,7 +270,14 @@ async def place_bid(submission_id: str, amount: int, bidder_id: int, bidder_name
                 "highest_bid": amount,
                 "highest_bidder_id": bidder_id,
                 "highest_bidder_name": bidder_name,
-            }
+            },
+            "$push": {
+                "bid_history": {
+                    "bidder_id": bidder_id,
+                    "bidder_name": bidder_name,
+                    "amount": amount,
+                }
+            },
         },
         return_document=ReturnDocument.BEFORE,
     )
@@ -278,6 +291,80 @@ async def place_bid(submission_id: str, amount: int, bidder_id: int, bidder_name
     if current_amount is None:
         current_amount = existing.get("price")
     return {"status": "too_low", "current_amount": current_amount}
+
+
+async def cancel_current_bid(submission_id: str, user_id: int) -> dict:
+    """
+    Cancels the current highest bid, but only if it belongs to user_id —
+    you can only cancel your own bid, and only while it's still the
+    highest one on that item. Reverts highest_bid/highest_bidder back to
+    the previous entry in bid_history (or to "no bids" if this was the
+    first and only bid).
+
+    Returns one of:
+      {"status": "ok", "cancelled_amount": <int>,
+       "new_highest_bid": <int or None>,
+       "new_highest_bidder_id": <int or None>,
+       "new_highest_bidder_name": <str or None>}
+      {"status": "not_found"}
+      {"status": "not_highest_bidder"}
+      {"status": "no_bid"}
+      {"status": "conflict"}   # someone else bid in between — retry
+    """
+    doc = await auctions_col.find_one({"submission_id": submission_id, "status": "active"})
+    if doc is None:
+        return {"status": "not_found"}
+
+    if doc.get("highest_bidder_id") != user_id:
+        return {"status": "not_highest_bidder"}
+
+    history = doc.get("bid_history", [])
+    if not history:
+        return {"status": "no_bid"}
+
+    cancelled_entry = history[-1]
+    new_history = history[:-1]
+
+    if new_history:
+        prev = new_history[-1]
+        new_highest_bid = prev["amount"]
+        new_highest_bidder_id = prev["bidder_id"]
+        new_highest_bidder_name = prev["bidder_name"]
+    else:
+        new_highest_bid = None
+        new_highest_bidder_id = None
+        new_highest_bidder_name = None
+
+    result = await auctions_col.find_one_and_update(
+        {
+            "submission_id": submission_id,
+            "status": "active",
+            "highest_bidder_id": user_id,
+            "highest_bid": doc.get("highest_bid"),
+        },
+        {
+            "$set": {
+                "highest_bid": new_highest_bid,
+                "highest_bidder_id": new_highest_bidder_id,
+                "highest_bidder_name": new_highest_bidder_name,
+                "bid_history": new_history,
+            }
+        },
+        return_document=ReturnDocument.AFTER,
+    )
+
+    if result is None:
+        # Someone placed a new bid between our read and write — safe to
+        # ask the user to retry rather than cancel the wrong bid.
+        return {"status": "conflict"}
+
+    return {
+        "status": "ok",
+        "cancelled_amount": cancelled_entry["amount"],
+        "new_highest_bid": new_highest_bid,
+        "new_highest_bidder_id": new_highest_bidder_id,
+        "new_highest_bidder_name": new_highest_bidder_name,
+    }
 
 
 async def get_due_auction_ids(limit: int = 100) -> list[str]:
@@ -299,7 +386,4 @@ async def claim_auction_for_closing(submission_id: str) -> dict | None:
     return await auctions_col.find_one_and_update(
         {"submission_id": submission_id, "status": "active"},
         {"$set": {"status": "closed"}},
-    )   
-async def get_active_auctions() -> list[dict]:
-    cursor = auctions_col.find({"status": "active"})
-    return [doc async for doc in cursor]
+    )
