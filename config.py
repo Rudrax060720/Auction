@@ -7,8 +7,20 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SUPER_ADMIN_ID = int(os.environ.get("SUPER_ADMIN_ID", "0"))
 
 # Fallback caption used only if nothing has been set in the database yet
-DEFAULT_CAPTION_TEXT = os.environ.get(
-    "DEFAULT_CAPTION_TEXT", "👋 Welcome!\n\nJoin our community below."
+DEFAULT_CAPTION_TEXT = (
+    "🎐 <b>Welcome to the Auction House!</b> 🎐\n"
+    "\n"
+    "Here you can:\n"
+    "\n"
+    "🃏 <i>Submit</i> your rarest Waifus/Husbandos for auction\n"
+    "\n"
+    "🔥 <i>Bid</i> on cards from other collectors\n"
+    "\n"
+    "🏆 <i>Win</i> and trade with fellow members\n"
+    "\n"
+    "Use /add to submit a card, /itemlist to browse active auctions, and /rules to see the rules.\n"
+    "\n"
+    "<b><i>Good luck, and may the best bid win!</i></b> 💫"
 )
 
 GROUP_URL = os.environ.get("GROUP_URL", "")
