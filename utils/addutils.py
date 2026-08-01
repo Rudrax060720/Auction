@@ -169,7 +169,7 @@ CB_BID_PREFIX = "bid_"
 # How long a verified card stays open for bidding before it's auto-closed.
 # ⚠️ TESTING: set to 60 seconds. Change back to `2 * 24 * 60 * 60` (2 days)
 # before going live.
-AUCTION_DURATION_SECONDS = 60
+AUCTION_DURATION_SECONDS = 2 * 24 * 60 * 60
 
 # ⚠️ Set this to the chat id of your log/verification group before deploying.
 # You can get a group's chat id by adding the bot to it and checking
