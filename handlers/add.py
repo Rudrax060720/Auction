@@ -18,6 +18,7 @@ from db import (
     create_auction,
     get_auction,
     place_bid,
+    admin_cancel_highest_bid,
     get_due_auction_ids,
     claim_auction_for_closing,
 )
@@ -666,6 +667,96 @@ async def end_auction_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await message.reply_text(build_end_auction_not_found_message())
 
 
+# ---------- Admin command: /cancelbid <item_id> — cancel the current highest bid ----------
+@admin_only
+async def cancel_bid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if message is None:
+        return
+
+    if not context.args:
+        await message.reply_text(build_cancel_bid_usage_message(), parse_mode="Markdown")
+        return
+
+    submission_id = context.args[0].strip()
+
+    post = await get_auction(submission_id)
+    if post is None:
+        await message.reply_text(build_end_auction_not_found_message())
+        return
+
+    result = await admin_cancel_highest_bid(submission_id)
+
+    if result["status"] == "not_found":
+        await message.reply_text(build_end_auction_not_found_message())
+        return
+    if result["status"] == "no_bid":
+        await message.reply_text(build_cancel_bid_no_bid_message())
+        return
+    if result["status"] == "conflict":
+        await message.reply_text(build_cancel_bid_conflict_message())
+        return
+
+    card = ParsedCard(**post["card"])
+    cancelled_bidder_id = result["cancelled_bidder_id"]
+    cancelled_amount = result["cancelled_amount"]
+    new_highest_bid = result["new_highest_bid"]
+    new_highest_bidder_id = result["new_highest_bidder_id"]
+    new_highest_bidder_name = result["new_highest_bidder_name"]
+    charge = calculate_cancellation_charge(cancelled_amount)
+
+    bidder_label = (
+        build_mention_from_id(new_highest_bidder_id, new_highest_bidder_name)
+        if new_highest_bidder_id is not None
+        else None
+    )
+
+    new_caption = build_public_post_caption(
+        card, post["price"], post["submitted_by"], new_highest_bid, bidder_label
+    )
+    bot_username = context.bot.username
+    new_keyboard = get_bid_keyboard(submission_id, bot_username, new_highest_bid)
+
+    for chat_id, message_id in (
+        (CHANNEL_CHAT_ID, post.get("channel_message_id")),
+        (GROUP_CHAT_ID, post.get("group_message_id")),
+    ):
+        if message_id is None:
+            continue
+        try:
+            await context.bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=new_caption,
+                parse_mode="Markdown",
+                reply_markup=new_keyboard,
+            )
+        except Exception:
+            pass
+
+    await message.reply_text(
+        build_bid_cancelled_admin_confirmation(card, cancelled_amount, charge),
+        parse_mode="Markdown",
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=cancelled_bidder_id,
+            text=build_bid_cancelled_bidder_notice(card, cancelled_amount, charge),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+    if new_highest_bidder_id is not None:
+        try:
+            await context.bot.send_message(
+                chat_id=new_highest_bidder_id,
+                text=build_bid_reinstated_notice(card, new_highest_bid),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 # ---------- Router for private-chat text messages (price reply vs. bid reply) ----------
 async def add_private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data or {}
