@@ -167,14 +167,18 @@ CB_REJECT_PREFIX = "reject_"
 CB_BID_PREFIX = "bid_"
 
 # How long a verified card stays open for bidding before it's auto-closed.
-# ⚠️ TESTING: set to 60 seconds. Change back to `2 * 24 * 60 * 60` (2 days)
-# before going live.
-AUCTION_DURATION_SECONDS = 2 * 24 * 60 * 60
+AUCTION_DURATION_SECONDS = 2 * 24 * 60 * 60  # 2 days
 
-# ⚠️ Set this to the chat id of your log/verification group before deploying.
-# You can get a group's chat id by adding the bot to it and checking
-# update.effective_chat.id from any message sent there.
-  # TODO: replace with your real log group chat id
+# Percentage charged on a bid that an admin cancels via /cancelbid,
+# based on the cancelled bid's amount.
+CANCELLATION_CHARGE_RATE = 0.10
+
+
+def calculate_cancellation_charge(amount: Optional[int]) -> int:
+    """10% charge on a cancelled bid, rounded to the nearest whole unit."""
+    if not amount:
+        return 0
+    return round(amount * CANCELLATION_CHARGE_RATE)
 
 
 # ---------- Keyboard builders ----------
@@ -425,6 +429,47 @@ def build_outbid_notice(card: "ParsedCard", amount: int) -> str:
     return (
         f"⚠️ You've been outbid on **{escape_md(card.char_name)}**!\n"
         f"The new highest bid is {amount}."
+    )
+
+
+# ---------- Admin bid cancellation (/cancelbid) ----------
+
+def build_cancel_bid_usage_message() -> str:
+    return (
+        "❌ Usage: `/cancelbid <item_id>`\n\n"
+        "Cancels the current highest bid on that item and reverts it to "
+        "the previous bid (or base price if there was no earlier bid)."
+    )
+
+
+def build_cancel_bid_no_bid_message() -> str:
+    return "❌ There's no active bid on that item to cancel."
+
+
+def build_cancel_bid_conflict_message() -> str:
+    return "⚠️ A new bid just came in on that item — please try again."
+
+
+def build_bid_cancelled_admin_confirmation(card: "ParsedCard", cancelled_amount: int, charge: int) -> str:
+    return (
+        f"✅ Cancelled the bid of {cancelled_amount} on **{escape_md(card.char_name)}**.\n\n"
+        f"{CURRENCY_EMOJI} Cancellation charge: {charge} (10%) — owed by the bidder."
+    )
+
+
+def build_bid_cancelled_bidder_notice(card: "ParsedCard", cancelled_amount: int, charge: int) -> str:
+    return (
+        f"↩️ Your bid of {cancelled_amount} on **{escape_md(card.char_name)}** "
+        "has been cancelled by an admin.\n\n"
+        f"{CURRENCY_EMOJI} A cancellation charge of {charge} (10%) applies — "
+        "please arrange payment with an admin."
+    )
+
+
+def build_bid_reinstated_notice(card: "ParsedCard", amount: int) -> str:
+    return (
+        f"🔁 A higher bid on **{escape_md(card.char_name)}** was just cancelled — "
+        f"your bid of {amount} is now the highest again!"
     )
 
 
