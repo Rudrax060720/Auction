@@ -145,7 +145,7 @@ def register_start_handlers(app):
     (e.g. in main.py), replace that registration with this one instead of
     having both, so there's only ever one /start handler."""
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(check_join_callback, pattern="^check_join$"))        ]
+    app.add_handler(CallbackQueryHandler(check_join_callback, pattern="^check_join$"))        
     )
 
     if file_id:
