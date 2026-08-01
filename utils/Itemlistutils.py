@@ -24,8 +24,8 @@ FILTER_WAIFU = "waifu"
 
 FILTER_LABEL = {
     FILTER_ALL: "All",
-    FILTER_HUSBANDO: "👨 Husbando",
-    FILTER_WAIFU: "👩 Waifu",
+    FILTER_HUSBANDO: "Husbando",
+    FILTER_WAIFU: "Waifu",
 }
 
 
@@ -115,11 +115,11 @@ def build_item_line(submission_id: str, post: dict) -> str:
     """
     card = post["card"]
     price = current_price(post)
-    bid_tag = "🔥" if post.get("highest_bid") is not None else ""
+    bid_tag = " " if post.get("highest_bid") is not None else ""
     type_label = TYPE_LABEL.get(card.card_type, card.card_type)
     price_part = f"{bid_tag} {price}".strip()
     return (
-        f"{card.rarity_emoji} **{escape_md(card.char_name)}** [{card.theme_emoji}] "
+        f"{card.rarity_emoji} **{escape_md(card.char_name)}** [[{card.theme_emoji}]] "
         f"({type_label}) — {price_part}"
     )
 
