@@ -57,6 +57,13 @@ from utils.addutils import (
     build_seller_no_bids_dm_message,
     build_end_auction_usage_message,
     build_end_auction_not_found_message,
+    build_cancel_bid_usage_message,
+    build_cancel_bid_no_bid_message,
+    build_cancel_bid_conflict_message,
+    build_bid_cancelled_admin_confirmation,
+    build_bid_cancelled_bidder_notice,
+    build_bid_reinstated_notice,
+    calculate_cancellation_charge,
     parse_card_caption,
     parse_price,
     is_allowed_rarity,
@@ -531,6 +538,117 @@ async def add_bid_amount_message(update: Update, context: ContextTypes.DEFAULT_T
             pass
 
 
+# ---------- Admin command: /cancelbid <item_id> — cancel the current highest bid ----------
+@admin_only
+async def cancel_bid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.message
+    if message is None:
+        return
+
+    if not context.args:
+        await message.reply_text(build_cancel_bid_usage_message(), parse_mode="Markdown")
+        return
+
+    submission_id = context.args[0].strip()
+
+    # Fetch the auction first — admin_cancel_highest_bid only returns the
+    # bid-state change (cancelled amount, new highest, etc.), not the card,
+    # price, submitted_by, or message ids needed to update the public posts
+    # and notify people. Those live on the auction document itself.
+    auction = await get_auction(submission_id)
+    if auction is None:
+        await message.reply_text(build_end_auction_not_found_message())
+        return
+
+    card = ParsedCard(**auction["card"])
+    price = auction["price"]
+    submitted_by = auction.get("submitted_by")
+    channel_message_id = auction.get("channel_message_id")
+    group_message_id = auction.get("group_message_id")
+
+    result = await admin_cancel_highest_bid(submission_id)
+
+    if result["status"] == "not_found":
+        # Auction got closed (e.g. by the periodic check) between our
+        # get_auction call and this one — treat it the same as "not found".
+        await message.reply_text(build_end_auction_not_found_message())
+        return
+
+    if result["status"] == "no_bid":
+        await message.reply_text(build_cancel_bid_no_bid_message())
+        return
+
+    if result["status"] == "conflict":
+        # A new bid landed between our read and the cancel write — bail
+        # out rather than risk cancelling a bid the admin didn't see.
+        await message.reply_text(build_cancel_bid_conflict_message())
+        return
+
+    # status == "ok"
+    cancelled_amount = result["cancelled_amount"]
+    cancelled_bidder_id = result.get("cancelled_bidder_id")
+    charge = calculate_cancellation_charge(cancelled_amount)
+
+    new_highest_bid = result.get("new_highest_bid")
+    new_highest_bidder_id = result.get("new_highest_bidder_id")
+    new_highest_bidder_name = result.get("new_highest_bidder_name")
+
+    new_bidder_label = (
+        build_mention_from_id(new_highest_bidder_id, new_highest_bidder_name)
+        if new_highest_bidder_id is not None
+        else None
+    )
+
+    # Reflect the reverted bid state on the public posts, same as a normal bid update.
+    new_caption = build_public_post_caption(
+        card, price, submitted_by, new_highest_bid, new_bidder_label
+    )
+    bot_username = context.bot.username
+    new_keyboard = get_bid_keyboard(submission_id, bot_username, new_highest_bid)
+
+    for chat_id, message_id in (
+        (CHANNEL_CHAT_ID, channel_message_id),
+        (GROUP_CHAT_ID, group_message_id),
+    ):
+        if message_id is None:
+            continue
+        try:
+            await context.bot.edit_message_caption(
+                chat_id=chat_id,
+                message_id=message_id,
+                caption=new_caption,
+                parse_mode="Markdown",
+                reply_markup=new_keyboard,
+            )
+        except Exception:
+            pass
+
+    await message.reply_text(
+        build_bid_cancelled_admin_confirmation(card, cancelled_amount, charge),
+        parse_mode="Markdown",
+    )
+
+    if cancelled_bidder_id is not None:
+        try:
+            await context.bot.send_message(
+                chat_id=cancelled_bidder_id,
+                text=build_bid_cancelled_bidder_notice(card, cancelled_amount, charge),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
+    if new_highest_bidder_id is not None:
+        try:
+            await context.bot.send_message(
+                chat_id=new_highest_bidder_id,
+                text=build_bid_reinstated_notice(card, new_highest_bid),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
+
 # ---------- Auction closing (shared by the periodic check and /endauction) ----------
 async def _finalize_auction(bot, submission_id: str) -> bool:
     """
@@ -701,3 +819,4 @@ def register_add_handlers(app: Application):
         )
     )
     app.add_handler(CommandHandler("endauction", end_auction_command))
+    app.add_handler(CommandHandler("cancelbid", cancel_bid_command))
