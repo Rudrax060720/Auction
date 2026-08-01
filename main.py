@@ -12,7 +12,7 @@ from handlers.start import start
 from handlers.help import help_command
 from handlers.admin import set_image, add_admin_command, remove_admin_command
 from handlers.verify import check_join_callback
-from handlers.add import register_add_handlers, close_due_auctions
+from handlers.add import register_add_handlers, close_due_auctions, cancel_bid_command
 from handlers.ban import register_ban_handlers
 from handlers.ban_guard import BOT_COMMANDS, global_ban_check_message, global_ban_check_callback
 from handlers.itemlist import (
@@ -88,6 +88,7 @@ def main() -> None:
     app.add_handler(CommandHandler("removeadmin", remove_admin_command))
     app.add_handler(CommandHandler(BOT_COMMANDS, global_ban_check_message), group=-1)
     app.add_handler(CallbackQueryHandler(global_ban_check_callback, pattern=".*"), group=-1)
+    app.add_handler(CommandHandler("cancelbid", cancel_bid_command))
     register_ban_handlers(app)
     register_add_handlers(app)
 
