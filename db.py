@@ -252,7 +252,7 @@ async def place_bid(submission_id: str, amount: int, bidder_id: int, bidder_name
     current highest (or base price) at the moment of the write — this closes
     the race window where two people bid at nearly the same instant. Also
     appends the accepted bid to bid_history so it can be reverted to later
-    via cancel_current_bid.
+    via admin_cancel_highest_bid.
 
     Returns one of:
       {"status": "ok", "previous_bidder_id": <id or None>}
@@ -293,30 +293,27 @@ async def place_bid(submission_id: str, amount: int, bidder_id: int, bidder_name
     return {"status": "too_low", "current_amount": current_amount}
 
 
-async def cancel_current_bid(submission_id: str, user_id: int) -> dict:
+async def admin_cancel_highest_bid(submission_id: str) -> dict:
     """
-    Cancels the current highest bid, but only if it belongs to user_id —
-    you can only cancel your own bid, and only while it's still the
-    highest one on that item. Reverts highest_bid/highest_bidder back to
-    the previous entry in bid_history (or to "no bids" if this was the
-    first and only bid).
+    Admin-only action: cancels whichever bid is currently highest on an
+    item, regardless of who placed it — unlike a self-service cancel, this
+    doesn't check who's calling; that check belongs in the handler via the
+    @admin_only decorator. Reverts highest_bid/highest_bidder back to the
+    previous entry in bid_history (or to "no bids" if the cancelled bid
+    was the only one).
 
     Returns one of:
-      {"status": "ok", "cancelled_amount": <int>,
+      {"status": "ok", "cancelled_bidder_id": <int>, "cancelled_amount": <int>,
        "new_highest_bid": <int or None>,
        "new_highest_bidder_id": <int or None>,
        "new_highest_bidder_name": <str or None>}
       {"status": "not_found"}
-      {"status": "not_highest_bidder"}
       {"status": "no_bid"}
-      {"status": "conflict"}   # someone else bid in between — retry
+      {"status": "conflict"}   # a new bid landed between read and write — retry
     """
     doc = await auctions_col.find_one({"submission_id": submission_id, "status": "active"})
     if doc is None:
         return {"status": "not_found"}
-
-    if doc.get("highest_bidder_id") != user_id:
-        return {"status": "not_highest_bidder"}
 
     history = doc.get("bid_history", [])
     if not history:
@@ -339,8 +336,8 @@ async def cancel_current_bid(submission_id: str, user_id: int) -> dict:
         {
             "submission_id": submission_id,
             "status": "active",
-            "highest_bidder_id": user_id,
             "highest_bid": doc.get("highest_bid"),
+            "highest_bidder_id": doc.get("highest_bidder_id"),
         },
         {
             "$set": {
@@ -354,12 +351,13 @@ async def cancel_current_bid(submission_id: str, user_id: int) -> dict:
     )
 
     if result is None:
-        # Someone placed a new bid between our read and write — safe to
-        # ask the user to retry rather than cancel the wrong bid.
+        # A new bid landed between our read and write — safe to ask the
+        # admin to retry rather than cancel the wrong bid.
         return {"status": "conflict"}
 
     return {
         "status": "ok",
+        "cancelled_bidder_id": cancelled_entry["bidder_id"],
         "cancelled_amount": cancelled_entry["amount"],
         "new_highest_bid": new_highest_bid,
         "new_highest_bidder_id": new_highest_bidder_id,
