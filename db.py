@@ -26,6 +26,8 @@ async def init_db() -> None:
     await auctions_col.create_index("submission_id", unique=True)
     await auctions_col.create_index([("status", 1), ("end_time", 1)])
     await pending_submissions_col.create_index("submission_id", unique=True)
+    await db["giveaways"].create_index("ticket", unique=True)
+    await db["giveaways"].create_index([("status", 1)])
 
     if SUPER_ADMIN_ID:
         await admins_col.update_one(
@@ -351,8 +353,6 @@ async def admin_cancel_highest_bid(submission_id: str) -> dict:
     )
 
     if result is None:
-        # A new bid landed between our read and write — safe to ask the
-        # admin to retry rather than cancel the wrong bid.
         return {"status": "conflict"}
 
     return {
@@ -383,5 +383,161 @@ async def claim_auction_for_closing(submission_id: str) -> dict | None:
     """
     return await auctions_col.find_one_and_update(
         {"submission_id": submission_id, "status": "active"},
+        {"$set": {"status": "closed"}},
+    )
+
+
+# ---- Giveaways ----
+#
+# Collection: giveaways
+# Schema per document:
+# {
+#     "ticket":               str,       # unique 8-char code
+#     "total_winners":        int,       # how many slots to fill
+#     "status":               str,       # "active" | "closed"
+#     "participation_closed": bool,      # True once deadline passes
+#     "deadline":             datetime,  # UTC, when entries stop
+#     "participants":         list[{user_id, display_name}],
+#     "drawn_slots":          dict,      # {"1": {user_id, display_name}, ...}
+#                                        # keys are STRINGS (MongoDB requirement)
+#     "created_at":           datetime,
+# }
+
+async def create_giveaway(
+    ticket: str,
+    total_winners: int,
+    deadline: datetime,
+) -> None:
+    """Create a fresh giveaway. Called by /giveaway."""
+    await db["giveaways"].insert_one(
+        {
+            "ticket": ticket,
+            "total_winners": total_winners,
+            "status": "active",
+            "participation_closed": False,
+            "deadline": deadline,
+            "participants": [],
+            "drawn_slots": {},
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+
+
+async def get_active_giveaway() -> dict | None:
+    """Returns the single active giveaway document, or None."""
+    return await db["giveaways"].find_one({"status": "active"})
+
+
+async def add_giveaway_participant(
+    ticket: str,
+    user_id: int,
+    display_name: str,
+) -> str:
+    """
+    Register a user in the active giveaway.
+
+    Returns:
+      "ok"             — successfully added
+      "already_joined" — user already entered
+      "not_found"      — no active giveaway with that ticket
+    """
+    giveaway = await db["giveaways"].find_one({"ticket": ticket, "status": "active"})
+    if giveaway is None:
+        return "not_found"
+
+    if any(p["user_id"] == user_id for p in giveaway.get("participants", [])):
+        return "already_joined"
+
+    await db["giveaways"].update_one(
+        {"ticket": ticket, "status": "active"},
+        {
+            "$push": {
+                "participants": {
+                    "user_id": user_id,
+                    "display_name": display_name,
+                }
+            }
+        },
+    )
+    return "ok"
+
+
+async def get_giveaway_participants(ticket: str) -> list[dict]:
+    """Returns the full participants list for a giveaway ticket."""
+    giveaway = await db["giveaways"].find_one({"ticket": ticket})
+    if giveaway is None:
+        return []
+    return giveaway.get("participants", [])
+
+
+async def mark_giveaway_slot_drawn(
+    ticket: str,
+    slot: int,
+    user_id: int,
+    display_name: str,
+) -> None:
+    """
+    Records a winner for a specific slot.
+    Slot number is stored as a string key (MongoDB doesn't allow int dict keys).
+    Called by /select and internally by /cancelwinner after the re-draw.
+    """
+    await db["giveaways"].update_one(
+        {"ticket": ticket},
+        {
+            "$set": {
+                f"drawn_slots.{slot}": {
+                    "user_id": user_id,
+                    "display_name": display_name,
+                }
+            }
+        },
+    )
+
+
+async def get_giveaway_drawn_slots(ticket: str) -> dict:
+    """
+    Returns drawn slots as {int_slot: {user_id, display_name}}.
+    String keys from MongoDB are cast back to int for easy comparison
+    in the handler (e.g. `if slot in drawn_slots`).
+    """
+    giveaway = await db["giveaways"].find_one({"ticket": ticket})
+    if giveaway is None:
+        return {}
+    return {int(k): v for k, v in giveaway.get("drawn_slots", {}).items()}
+
+
+async def cancel_giveaway_slot(ticket: str, slot: int) -> None:
+    """
+    Removes a drawn slot so it becomes empty and can be re-drawn.
+    Called by /cancelwinner before picking a new winner for that slot.
+    Uses $unset so the key is fully removed from the drawn_slots dict.
+    """
+    await db["giveaways"].update_one(
+        {"ticket": ticket},
+        {"$unset": {f"drawn_slots.{slot}": ""}},
+    )
+
+
+async def close_giveaway_participation(ticket: str) -> None:
+    """
+    Marks participation as closed once the deadline passes.
+    The giveaway itself stays "active" so winners can still be drawn —
+    this only stops new /participate entries from being accepted.
+    Called by the background job and as a fallback in /participate.
+    """
+    await db["giveaways"].update_one(
+        {"ticket": ticket},
+        {"$set": {"participation_closed": True}},
+    )
+
+
+async def close_giveaway(ticket: str) -> None:
+    """
+    Fully closes the giveaway (status → "closed") once all winner
+    slots have been filled. After this, get_active_giveaway() returns
+    None, allowing a new giveaway to be started.
+    """
+    await db["giveaways"].update_one(
+        {"ticket": ticket},
         {"$set": {"status": "closed"}},
     )
