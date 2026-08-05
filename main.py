@@ -15,6 +15,7 @@ from handlers.verify import check_join_callback
 from handlers.add import register_add_handlers, close_due_auctions
 from handlers.ban import register_ban_handlers
 from handlers.ban_guard import BOT_COMMANDS, global_ban_check_message, global_ban_check_callback
+from handlers.giveaway import register_giveaway_handlers
 from handlers.itemlist import (
     itemlist_command,
     itemlist_callback,
@@ -91,7 +92,7 @@ def main() -> None:
     app.add_handler(CommandHandler("rules", rules_command))
     register_ban_handlers(app)
     register_add_handlers(app)
-
+    register_giveaway_handlers(app)
     # /itemlist and /myitem
     app.add_handler(CommandHandler("itemlist", itemlist_command))
     app.add_handler(CommandHandler("myitem", myitem_command))
